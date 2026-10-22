@@ -1,0 +1,24 @@
+# ===== Xmind 样式槽：构建产物 / 自举依赖（自动生成，不入库） =====
+
+# Node 自举（下载到 tools/node，或者系统 node，都不入库）
+tools/node/
+tools/node.tar.xz
+tools/node-*/
+
+# npm 依赖
+tools/node_modules/
+
+# Xmind 解包 / 构建
+tools/xmind-unpacked-orig/
+tools/build/
+tools/app.asar.bak
+
+# 本地调试工具的编译产物
+tools/click
+tools/drag
+
+# Release 打包产物
+release/
+dist/
+*.tar.gz
+*.dmg

@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>样式槽</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+    cursor: default;
+  }
+  body { padding: 10px; }
+
+  .card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%; height: 100%;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.34);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    overflow: hidden;
+  }
+
+  .card.offline .list { opacity: .5; }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 42px;
+    padding: 0 10px 0 15px;
+    flex: none;
+    cursor: grab;
+  }
+  .header:active { cursor: grabbing; }
+  .title {
+    font-size: 11.5px;
+    font-weight: 650;
+    letter-spacing: 1.4px;
+    color: #6f6f75;
+  }
+  .spacer { flex: 1; }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10.5px;
+    color: #94949a;
+    letter-spacing: .2px;
+  }
+  .dotstatus {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #c9c9ce;
+    transition: background .25s ease, box-shadow .25s ease;
+  }
+  .dotstatus.on {
+    background: #34c759;
+    box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.16);
+  }
+  .close {
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; border-radius: 6px;
+    background: transparent;
+    color: #a5a5ab;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    font-family: inherit;
+  }
+  .close:hover { background: rgba(0, 0, 0, .06); color: #4a4a4f; }
+
+  .hairline {
+    height: 1px;
+    margin: 0 12px;
+    background: rgba(0, 0, 0, 0.06);
+    flex: none;
+  }
+
+  /* ---------- 槽位 ---------- */
+  .list {
+    flex: 1;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 9px;
+    border-radius: 11px;
+    transition: background .13s ease;
+  }
+  .row.filled { cursor: pointer; }
+  .row.filled:hover { background: rgba(0, 0, 0, .045); }
+  .row.filled:active { background: rgba(0, 0, 0, .07); }
+
+  .swatch {
+    flex: none;
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 0, 0, .12);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .55);
+  }
+  .swatch.empty {
+    background: transparent;
+    border: 1.5px dashed rgba(0, 0, 0, .16);
+    box-shadow: none;
+  }
+
+  .info { flex: 1; min-width: 0; }
+  .name {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #1d1d1f;
+    line-height: 1.25;
+  }
+  .meta {
+    font-size: 10.5px;
+    color: #8e8e93;
+    line-height: 1.35;
+    letter-spacing: .1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row:not(.filled) .name { color: #6f6f75; }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .btn {
+    height: 23px;
+    padding: 0 9px;
+    border: none;
+    border-radius: 7px;
+    background: rgba(0, 0, 0, .05);
+    color: #5c5c62;
+    font-size: 11px;
+    font-weight: 550;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background .13s, color .13s;
+  }
+  .btn:hover { background: rgba(0, 0, 0, .1); color: #2c2c30; }
+  .btn.danger {
+    width: 23px; padding: 0;
+    opacity: 0;
+    background: transparent;
+  }
+  .row.filled:hover .btn.danger { opacity: 1; }
+  .btn.danger:hover { background: rgba(255, 59, 48, .12); color: #ff3b30; }
+
+  /* ---------- 底部 ---------- */
+  .footer {
+    flex: none;
+    padding: 0 12px 10px;
+    text-align: center;
+    font-size: 10px;
+    color: #a8a8ae;
+    letter-spacing: .2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ---------- 紧凑模式 ---------- */
+  @media (max-height: 120px) {
+    .header { height: 0; padding: 0; opacity: 0; pointer-events: none; }
+    .hairline { display: none; }
+    .list {
+      flex-direction: row;
+      flex-wrap: nowrap;
+      padding: 4px;
+      gap: 4px;
+      justify-content: center;
+      height: 100%;
+    }
+    .row {
+      padding: 4px;
+      gap: 0;
+      width: 100%;
+      justify-content: center;
+    }
+    .swatch { width: 28px; height: 28px; border-radius: 10px; }
+    .info, .actions { display: none; }
+    .footer { display: none; }
+    .grip { right: 2px; bottom: 2px; }
+  }
+
+  @media (max-width: 170px) and (min-height: 120px) {
+    .info, .actions { display: none; }
+    .row { padding: 6px 8px; gap: 8px; }
+  }
+
+  /* ---------- 右下角缩放手柄 ---------- */
+  .grip {
+    position: absolute;
+    right: 4px; bottom: 4px;
+    width: 15px; height: 15px;
+    cursor: nwse-resize;
+    opacity: 0;
+    transition: opacity .15s ease;
+    background:
+      linear-gradient(135deg, transparent 0 58%, rgba(0,0,0,.30) 58% 65%, transparent 65%),
+      linear-gradient(135deg, transparent 0 74%, rgba(0,0,0,.30) 74% 81%, transparent 81%);
+  }
+  .card:hover .grip { opacity: 1; }
+
+  /* ---------- 提示 ---------- */
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 26px;
+    transform: translate(-50%, 8px);
+    padding: 6px 13px;
+    border-radius: 9px;
+    background: rgba(28, 28, 30, .92);
+    color: #fff;
+    font-size: 11px;
+    letter-spacing: .2px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+  <div class="card offline" id="card">
+    <div class="header" id="header">
+      <span class="title">样式槽</span>
+      <span class="spacer"></span>
+      <span class="status"><span class="dotstatus" id="statusDot"></span><span id="statusText">未连接</span></span>
+      <button class="close" id="closeBtn" title="关闭面板">✕</button>
+    </div>
+    <div class="hairline"></div>
+    <div class="list" id="list"></div>
+    <div class="footer" id="footer">点行套用 · 「存」记录当前选中样式</div>
+    <div class="grip" id="grip" title="拖动调整大小"></div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+  const NAMES = ["一", "二", "三", "四", "五"];
+  const listEl = document.getElementById("list");
+  const cardEl = document.getElementById("card");
+  const statusDot = document.getElementById("statusDot");
+  const statusText = document.getElementById("statusText");
+  const footerEl = document.getElementById("footer");
+  const toastEl = document.getElementById("toast");
+
+  let slots = [null, null, null, null, null];
+  let connected = false;
+  let selectionCount = 0;
+  let textSelection = false;
+  let toastTimer = null;
+
+  function post(payload) {
+    try {
+      window.webkit.messageHandlers.cmd.postMessage(payload);
+    } catch (e) {}
+  }
+
+  function toast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1200);
+  }
+
+  function weightLabel(w) {
+    const n = parseInt(w, 10);
+    if (isNaN(n)) return "常规";
+    return n >= 600 ? "加粗" : "常规";
+  }
+
+  // #RRGGBBFF → #RRGGBB，避免面板上显示一长串
+  function shortColor(c) {
+    if (!c) return "";
+    return /^#[0-9A-Fa-f]{6}FF$/.test(c) ? c.slice(0, 7) : c;
+  }
+
+  function render() {
+    cardEl.classList.toggle("offline", !connected);
+    statusDot.classList.toggle("on", connected);
+    statusText.textContent = connected ? "已连接" : "未连接";
+    if (!connected) footerEl.textContent = "未连接 Xmind · 请先打开 Xmind";
+    else if (textSelection) footerEl.textContent = "已选中文字 · 点行只套用到这段文字";
+    else if (!selectionCount) footerEl.textContent = "已连接 · 先在 Xmind 里选中主题";
+    else footerEl.textContent = "点行套用 · 「存」记录选中格式";
+
+    listEl.innerHTML = "";
+    slots.forEach((style, i) => {
+      const row = document.createElement("div");
+      row.className = "row" + (style ? " filled" : "");
+
+      const swatch = document.createElement("div");
+      swatch.className = "swatch" + (style ? "" : " empty");
+      if (style && style.textColor) swatch.style.background = shortColor(style.textColor);
+      row.appendChild(swatch);
+
+      const info = document.createElement("div");
+      info.className = "info";
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = "样式" + NAMES[i];
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = style
+        ? style.fontSize + " · " + weightLabel(style.fontWeight) +
+          (style.textColor ? " · " + shortColor(style.textColor) : "")
+        : "未设置";
+      info.appendChild(name);
+      info.appendChild(meta);
+      row.appendChild(info);
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      const saveBtn = document.createElement("button");
+      saveBtn.className = "btn";
+      saveBtn.textContent = "存";
+      saveBtn.title = "把当前选中主题的样式存入此槽";
+      saveBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+      saveBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!connected) return toast("未连接 Xmind");
+        post({ type: "save", slot: i });
+        toast("已记录当前样式");
+      });
+      actions.appendChild(saveBtn);
+
+      if (style) {
+        const clearBtn = document.createElement("button");
+        clearBtn.className = "btn danger";
+        clearBtn.textContent = "✕";
+        clearBtn.title = "清空此槽";
+        clearBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+        clearBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!connected) return toast("未连接 Xmind");
+          post({ type: "clear", slot: i });
+          toast("已清空样式" + NAMES[i]);
+        });
+        actions.appendChild(clearBtn);
+      }
+      row.appendChild(actions);
+
+      row.addEventListener("click", () => {
+        if (!connected) return toast("未连接 Xmind");
+        if (!style) return toast("样式" + NAMES[i] + " 还是空的，先点「存」");
+        post({ type: "apply", slot: i });
+        toast("已套用 样式" + NAMES[i]);
+      });
+
+      listEl.appendChild(row);
+    });
+  }
+
+  // 由原生层推送状态
+  window.__pushState = function (state) {
+    if (!state) return;
+    connected = !!state.connected;
+    selectionCount = state.selection && state.selection.count ? state.selection.count : 0;
+    textSelection = !!state.textSelection;
+    if (Array.isArray(state.slots)) slots = state.slots.slice(0, 5);
+    while (slots.length < 5) slots.push(null);
+    render();
+  };
+
+  document.getElementById("closeBtn").addEventListener("click", () => post({ type: "quit" }));
+
+  const header = document.getElementById("header");
+  header.addEventListener("mousedown", (e) => {
+    if (e.target.closest("button")) return;
+    post({ type: "dragStart" });
+  });
+
+  document.getElementById("grip").addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    post({ type: "resizeStart" });
+  });
+
+  render();
+</script>
+</body>
+</html>
