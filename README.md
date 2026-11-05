@@ -9,7 +9,7 @@
 - **悬浮面板**：macOS 原生液态玻璃（macOS 26 NSGlassEffectView），跟随 Xmind 自动启动，可拖动、可缩放
 - **文字级格式**：在 Xmind 里选中一段文字后再「保存样式」，会精确记录那段文字的格式；之后点击面板对应槽位，只把格式套用到这段选中的文字上
 
-支持 macOS 12+，Apple Silicon (arm64) 和 Intel (x86_64)。
+支持 macOS 13+，Apple Silicon (arm64) 和 Intel (x86_64)。
 
 ---
 

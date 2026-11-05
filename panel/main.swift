@@ -144,6 +144,8 @@ final class CDPClient: NSObject, URLSessionWebSocketDelegate {
 // MARK: - 悬浮面板
 
 final class FloatingPanel: NSPanel {
+    // 面板需要能成为 key window，否则 AppKit 会直接丢弃点击（实测点击到不了页面）。
+    // 焦点丢失的问题在插件侧用「缓存最后文字选区」兜住。
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
@@ -393,6 +395,7 @@ final class PanelController: NSObject, WKScriptMessageHandler {
             let type = body["type"] as? String
         else { return }
         let slot = (body["slot"] as? Int) ?? 0
+        panelLog("收到 JS 消息 \(type) slot=\(slot)")
 
         switch type {
         case "apply":

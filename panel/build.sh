@@ -20,9 +20,12 @@ SWIFT_VERSION="$(swiftc -version 2>&1 | grep -oE 'Swift version [0-9.]+' | awk '
 echo "  swiftc $SWIFT_VERSION on $ARCH"
 
 # swiftc 不能直接 -arch arm64 -arch x86_64，要分架构编然后 lipo 合并
+# 部署目标必须是 13.0：Command Line Tools 里的 Swift 兼容库只有 arm64 切片，
+# 用 12.0 交叉编 x86_64 会因 libswiftCompatibility56 缺 x86_64 而链接失败
+DEPLOY_TARGET="13.0"
 build_arch() {
   local target_arch="$1"
-  local target="${target_arch}-apple-macosx12.0"
+  local target="${target_arch}-apple-macosx${DEPLOY_TARGET}"
   local tmp="$(mktemp)"
   if swiftc -O -swift-version 5 \
       -target "$target" \

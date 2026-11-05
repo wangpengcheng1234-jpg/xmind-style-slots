@@ -81,6 +81,7 @@
       const view = sheet && sheet.query({ id: topicId });
       const topic = view && view.asTopic ? view.asTopic() : null;
       if (!topic) return false;
+      if (spanUniformStyle(topic)) return true;
       return !!(topic.textColor || topic.fontSize || topic.fontWeight);
     } catch (e) {
       return false;
@@ -134,6 +135,10 @@
     return base + (pos.offset || 0);
   }
 
+  // 面板点击会让 Xmind 失焦，文字编辑会话随之结束、选区丢失。
+  // 这里缓存最后一次有效选区，点击后仍能按原选区精确套用。
+  let recentTextSel = null;
+
   // 正在编辑文字且选中了一段文字时，返回选区信息
   function getTextSelection(st) {
     try {
@@ -147,10 +152,71 @@
       const start = Math.min(a, f);
       const end = Math.max(a, f);
       if (end <= start) return null;
-      return { cur: cur, start: start, end: end };
+      const ids = selectedIds(st);
+      recentTextSel = {
+        topicId: ids[0] || null,
+        start: start,
+        end: end,
+        titleLen: (cur.text || "").length,
+        at: Date.now(),
+      };
+      return { cur: cur, tim: tim, start: start, end: end, topicId: ids[0] || null };
     } catch (e) {
       return null;
     }
+  }
+
+  // 编辑会话刚被面板点击打断时，用缓存的选区继续套用
+  function getRecentTextSelection(st) {
+    const r = recentTextSel;
+    if (!r || !r.topicId) return null;
+    // 只认 4 秒内的选区，太久远的不敢用
+    if (Date.now() - r.at > 4000) return null;
+    const ids = selectedIds(st);
+    if (!ids.length || ids[0] !== r.topicId) return null;
+    const topic = getTopicById(st, r.topicId);
+    if (!topic) return null;
+    if ((topic.title || "").length !== r.titleLen) return null;
+    const total = (topic.attributedTitle || []).reduce((n, s) => n + (s.text || "").length, 0);
+    if (r.end > Math.max(total, (topic.title || "").length)) return null;
+    return { start: r.start, end: r.end, topicId: r.topicId, stale: true, age: Date.now() - r.at };
+  }
+
+  // 颜色统一成 #RRGGBBAA 形式，便于比较和写回
+  function normalizeHex(v) {
+    if (!v) return null;
+    let s = String(v).trim();
+    if (s.charAt(0) !== "#") s = "#" + s;
+    s = s.toUpperCase();
+    if (s.length === 7) s += "FF";
+    return s;
+  }
+
+  // 正在编辑的编辑器里，offset 处 span 的样式（用于套用后校验）
+  function editorSpanAt(tim, offset) {
+    try {
+      const cur = tim.currentText();
+      const spans = cur.textSpans || [];
+      let pos = 0;
+      for (const sp of spans) {
+        const len = (sp.text || "").length;
+        if (offset >= pos && offset < pos + len) return sp;
+        pos += len;
+      }
+      return spans[spans.length - 1] || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function styleMatches(span, patch) {
+    if (!span) return false;
+    const okc = patch.textColor
+      ? normalizeHex(span.textColor) === normalizeHex(patch.textColor)
+      : true;
+    const okw = patch.fontWeight ? String(span.fontWeight) === String(patch.fontWeight) : true;
+    const oks = patch.fontSize ? String(span.fontSize) === String(patch.fontSize) : true;
+    return okc && okw && oks;
   }
 
   function sizeToPt(v) {
@@ -168,6 +234,22 @@
     } catch (e) {
       return null;
     }
+  }
+
+  // 主题的富文本 span 自带显式样式时（topic.textColor 为 null 但视图上有颜色），
+  // 把各 span 里一致的样式汇总出来，作为该主题的"显式样式"
+  function spanUniformStyle(topic) {
+    const spans = ((topic && topic.attributedTitle) || []).filter(
+      (s) => s && s.text && s.text.trim()
+    );
+    if (!spans.length) return null;
+    const out = {};
+    for (const key of ["textColor", "fontWeight", "fontSize"]) {
+      const vals = spans.map((s) => s[key] || null);
+      const first = vals[0];
+      if (first && vals.every((v) => v === first)) out[key] = first;
+    }
+    return Object.keys(out).length ? out : null;
   }
 
   // 主题富文本里，offset 所在的 span 的显式样式
@@ -196,13 +278,14 @@
     const topic = topicId ? getTopicById(st, topicId) : null;
     const spanAttrs = spanStyleAt(topic, sel.start) || {};
 
-    const spans = sel.cur.textSpans || [];
+    const cur = sel.cur || null;
+    const spans = (cur && cur.textSpans) || [];
     const anchorIdx = Math.max(
       0,
-      Math.min(((sel.cur.selection.anchor || {}).index) || 0, spans.length - 1)
+      Math.min(((cur && cur.selection && cur.selection.anchor) || {}).index || 0, spans.length - 1)
     );
     const edSpan = spans[anchorIdx] || {};
-    const fallback = sel.cur.defaultAttributes || {};
+    const fallback = (cur && cur.defaultAttributes) || {};
 
     const color =
       spanAttrs.textColor || edSpan.textColor || (topic && topic.textColor) || fallback.textColor;
@@ -253,27 +336,51 @@
     return out;
   }
 
-  // 套用到当前文字选区
-  function applyToSelection(st, style) {
+  // 套用到当前文字选区。返回 { ok, mode }，ok 由实际结果校验得出，不再"说成功就成功"
+  function applyToSelection(st, style, selIn) {
+    const sel = selIn || getTextSelection(st);
+    if (!sel) return { ok: false, why: "no-text-selection" };
+
     const ids = selectedIds(st);
-    if (!ids.length) return false;
-    const topic = getTopicById(st, ids[0]);
-    if (!topic) return false;
+    const topicId = sel.topicId || ids[0];
+    const topic = topicId ? getTopicById(st, topicId) : null;
+    if (!topic) return { ok: false, why: "no-topic" };
 
-    const sel = getTextSelection(st);
-    if (!sel) return false;
-
-    const spans = normalizeSpans(topic);
     const patch = {};
-    if (style.textColor) patch.textColor = style.textColor;
-    if (style.fontWeight) patch.fontWeight = style.fontWeight;
-    if (style.fontSize) patch.fontSize = style.fontSize;
+    if (style.textColor) patch.textColor = normalizeHex(style.textColor);
+    if (style.fontWeight) patch.fontWeight = String(style.fontWeight);
+    if (style.fontSize) patch.fontSize = String(style.fontSize);
+
+    // 1) 原生编辑器通道：直接改文字编辑会话的选区，跟手动点工具栏是同一条路径，
+    //    立刻可见、撤销栈正确，且不会让编辑会话失效
+    if (sel.cur && sel.tim && typeof sel.tim.applyTextAttributes === "function") {
+      try {
+        sel.tim.applyTextAttributes(patch);
+      } catch (e) {}
+      if (styleMatches(editorSpanAt(sel.tim, sel.start), patch)) {
+        return { ok: true, mode: "editor" };
+      }
+    }
+
+    // 2) 退回模型 patch：切完 span 后写回 attributedTitle
+    const spans = normalizeSpans(topic);
+    // 编辑器里的文字和模型不一致（刚输入还没提交）时，偏移量对不上，宁可不动
+    if (sel.cur && sel.cur.text && sel.cur.text !== spans.map((s) => s.text).join("")) {
+      return { ok: false, why: "range-out-of-date" };
+    }
+    const total = spans.reduce((n, s) => n + (s.text || "").length, 0);
+    if (sel.end > total) return { ok: false, why: "range-out-of-date" };
 
     const next = patchRange(spans, sel.start, sel.end, patch);
-    const committed = topic.asMutable().attrs({ attributedTitle: next }).commit();
-    // 立即强制重绘，让用户像手动设置一样秒看到效果
-    try { st.emitForceRendering && st.emitForceRendering(); } catch (e) {}
-    // 异步补 undo（changeDoc 很重，放后面不阻塞视觉）
+    let committed = null;
+    try {
+      committed = topic.asMutable().attrs({ attributedTitle: next }).commit();
+    } catch (e) {
+      return { ok: false, why: "commit-failed" };
+    }
+    try {
+      st.emitForceRendering && st.emitForceRendering();
+    } catch (e) {}
     Promise.resolve().then(() => {
       try {
         const doc =
@@ -282,28 +389,86 @@
         if (doc && st.changeDoc) st.changeDoc(doc);
       } catch (e) {}
     });
-    return true;
+
+    const check = spanStyleAt(getTopicById(st, topicId), sel.start);
+    return { ok: styleMatches(check, patch), mode: "model" };
+  }
+
+  // 整个主题套用：同时写主题属性和 span 样式，
+  // 否则只改 topic.textColor 会被 span 里的显式颜色覆盖，表现为"没反应"
+  function applyToTopics(st, ids, style) {
+    const patch = {};
+    if (style.textColor) patch.textColor = normalizeHex(style.textColor);
+    if (style.fontWeight) patch.fontWeight = String(style.fontWeight);
+    if (style.fontSize) patch.fontSize = String(style.fontSize);
+
+    let committed = null;
+    let applied = 0;
+    for (const id of ids) {
+      const topic = getTopicById(st, id);
+      if (!topic) continue;
+      const attrs = Object.assign({}, patch);
+      const spans = (topic.attributedTitle || []).filter((s) => s && s.text);
+      // 只有 span 拼起来正好等于标题时才安全改写，否则直接改主题属性
+      if (spans.length && spans.map((s) => s.text).join("") === (topic.title || "")) {
+        attrs.attributedTitle = spans.map((s) => Object.assign({}, s, patch));
+      }
+      try {
+        committed = topic.asMutable().attrs(attrs).commit();
+        applied++;
+      } catch (e) {}
+    }
+
+    if (!applied) return { ok: false, applied: 0, why: "commit-failed" };
+
+    try {
+      st.emitForceRendering && st.emitForceRendering();
+    } catch (e) {}
+    Promise.resolve().then(() => {
+      try {
+        const doc =
+          committed &&
+          (committed.ownerDocument ||
+            (committed.primaryOwnerSheet && committed.primaryOwnerSheet.ownerDocument) ||
+            (committed.ownerSheet && committed.ownerSheet.ownerDocument));
+        if (doc && st.changeDoc) st.changeDoc(doc);
+      } catch (e) {}
+    });
+
+    // 校验第一个主题是否真的变了（span 或主题属性任一命中都算生效）
+    const first = getTopicById(st, ids[0]);
+    const sp = spanStyleAt(first, 0) || {};
+    const gotColor = sp.textColor || (first && first.textColor && colorToHex(first.textColor));
+    const gotWeight = sp.fontWeight || (first && first.fontWeight);
+    const gotSize = sp.fontSize || (first && first.fontSize);
+    const okc = patch.textColor ? normalizeHex(gotColor) === normalizeHex(patch.textColor) : true;
+    const okw = patch.fontWeight ? String(gotWeight || "") === String(patch.fontWeight) : true;
+    const oks = patch.fontSize ? String(gotSize || "") === String(patch.fontSize) : true;
+    return { ok: okc && okw && oks, applied: applied };
   }
 
   function readStyleOf(st, topicId) {
-    // 模型属性（topic.textColor 等）是即时生效的；
-    // 渲染层快照（figure.viewAttributes）会滞后数百毫秒，只能用来补全"继承值"。
+    // 优先读模型层：span 里的显式样式 → topic 属性 → 渲染快照（仅补继承值）
     const topic = getTopicById(st, topicId);
+    const span = spanUniformStyle(topic) || {};
 
     const fig = st.activeSheetFigure && st.activeSheetFigure.value;
     const f = fig && fig.topicFigureByTopicId && fig.topicFigureByTopicId[topicId];
     const va = f && f.viewAttributes;
 
     let textColor = null;
-    if (topic && topic.textColor) textColor = colorToHex(topic.textColor);
+    if (span.textColor) textColor = colorToHex(span.textColor);
+    else if (topic && topic.textColor) textColor = colorToHex(topic.textColor);
     else if (va && va.titleTextColor) textColor = colorToHex(va.titleTextColor);
 
     let fontWeight = null;
-    if (topic && topic.fontWeight) fontWeight = String(topic.fontWeight);
+    if (span.fontWeight) fontWeight = String(span.fontWeight);
+    else if (topic && topic.fontWeight) fontWeight = String(topic.fontWeight);
     else if (va && va.titleTextFontWeight) fontWeight = String(va.titleTextFontWeight);
 
     let fontSize = null;
-    if (topic && topic.fontSize) fontSize = String(topic.fontSize);
+    if (span.fontSize) fontSize = String(span.fontSize);
+    else if (topic && topic.fontSize) fontSize = String(topic.fontSize);
     else if (va && va.titleTextFontSize) fontSize = Math.round(va.titleTextFontSize) + "pt";
 
     if (!fontSize && !fontWeight && !textColor) return null;
@@ -351,6 +516,13 @@
       return;
     }
 
+    // 面板点击刚打断编辑会话时，用缓存的选区读样式
+    const recent = getRecentTextSelection(st);
+    if (recent) {
+      commit(readSelectionStyle(st, recent, ids[0]), true);
+      return;
+    }
+
     // 主题用的是继承样式时，渲染快照可能还没跟上，强制重绘后再读一次
     if (hasOwnStyle(st, ids[0])) {
       commit(readStyleOf(st, ids[0]), false);
@@ -377,45 +549,44 @@
     // 优先：正在编辑文字且选中了一段 → 只套用给这段文字
     const textSel = getTextSelection(st);
     if (textSel) {
-      if (applyToSelection(st, style)) toast("已套用到选中的文字");
-      else toast("套用失败，请再试一次");
-      return;
+      const r = applyToSelection(st, style, textSel);
+      if (r.ok) {
+        toast("已套用到选中的文字");
+      } else if (r.why === "range-out-of-date") {
+        toast("选中的文字已变化\n请重新选中文字再按一次");
+      } else {
+        toast("套用失败，请再试一次");
+      }
+      return r;
     }
 
-    if (st.isEditingTitle && st.isEditingTitle.value) {
+    // 面板点击刚把编辑会话打断时，按缓存的选区继续套用，
+    // 不再退化成"整个主题"，也就不会出现要点两遍
+    const editing = !!(st.isEditingTitle && st.isEditingTitle.value);
+    const recent = getRecentTextSelection(st);
+    if (recent && (!editing || recent.age <= 2000)) {
+      recent.cur = null; // 会话已断，走模型 patch
+      const r = applyToSelection(st, style, recent);
+      if (r.ok) {
+        toast("已套用到刚才选中的文字");
+        return r;
+      }
+    }
+
+    if (editing) {
       toast("请先在主题里选中要高亮的文字\n或按 Esc 退出编辑，套用给整个主题");
-      return;
+      return { ok: false, why: "editing-without-selection" };
     }
 
-    const patch = {};
-    if (style.textColor) patch.textColor = style.textColor;
-    if (style.fontWeight) patch.fontWeight = style.fontWeight;
-    if (style.fontSize) patch.fontSize = style.fontSize;
-
-    try {
-      const sheet = st.activeSheet.value;
-      const committed = sheet
-        .queryList(ids.map((id) => ({ id })))
-        .asTopics()
-        .asMutable()
-        .attrs(patch)
-        .commit();
-      // 立即强制重绘，让用户像手动设置一样秒看到效果
-      try { st.emitForceRendering && st.emitForceRendering(); } catch (e) {}
-      // 异步补 undo（changeDoc 很重，放后面不阻塞视觉）
-      Promise.resolve().then(() => {
-        try {
-          const doc =
-            committed.ownerDocument ||
-            (committed.primaryOwnerSheet && committed.primaryOwnerSheet.ownerDocument) ||
-            (committed.ownerSheet && committed.ownerSheet.ownerDocument);
-          if (doc && st.changeDoc) st.changeDoc(doc);
-        } catch (e) {}
-      });
-      toast("已应用样式槽 " + SLOT_CN[idx] + "（" + ids.length + " 个主题）");
-    } catch (e) {
-      toast("应用失败：" + (e && e.message ? e.message : e));
+    const r = applyToTopics(st, ids, style);
+    if (r.ok) {
+      toast("已应用样式槽 " + SLOT_CN[idx] + "（" + r.applied + " 个主题）");
+    } else if (r.applied > 0) {
+      toast("已写入 " + r.applied + " 个主题，但视图未确认\n请再按一次试试");
+    } else {
+      toast("应用失败，请再试一次");
     }
+    return r;
   }
 
   function modsMatch(e, want) {
