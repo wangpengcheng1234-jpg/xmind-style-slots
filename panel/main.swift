@@ -181,21 +181,30 @@ final class PanelController: NSObject, WKScriptMessageHandler {
     func start() {
         buildWindow()
         buildWebView()
+        // CDP 回调来自 URLSession 的后台队列，所有窗口/WebView 操作必须切回主线程
         cdp.onOpen = { [weak self] in
-            self?.isConnected = true
-            self?.isConnecting = false
-            self?.refresh()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isConnected = true
+                self.isConnecting = false
+                // Xmind 就绪后再置前一次：避免面板在 Xmind 启动过程中被挤到后面
+                self.panel.orderFrontRegardless()
+                self.refresh()
+            }
         }
         cdp.onClosed = { [weak self] in
-            self?.isConnected = false
-            self?.isConnecting = false
-            self?.pushDisconnected()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isConnected = false
+                self.isConnecting = false
+                self.pushDisconnected()
+            }
         }
         panel.orderFrontRegardless()
+        panelLog("面板已启动 isVisible=\(panel.isVisible) mini=\(panel.isMiniaturized) frame=\(panel.frame) level=\(panel.level.rawValue) active=\(NSApp.isActive)")
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.tick()
         }
-        panelLog("面板已启动")
     }
 
     private func buildWindow() {
@@ -312,6 +321,18 @@ final class PanelController: NSObject, WKScriptMessageHandler {
 
     private func tick() {
         patchFirstMouseDeep(webView)
+        // 后台启动（open -g）时窗口有时不会被系统真正显示出来，
+        // 这里每次轮询兜底：窗口不可见就重新置前
+        if !panel.isVisible || panel.isMiniaturized {
+            panel.orderFrontRegardless()
+            if !panel.isVisible {
+                // 兜底：后台启动时系统可能连 orderFrontRegardless 都不认，
+                // 激活一次自身进程强制显示
+                NSApp.activate(ignoringOtherApps: true)
+                panel.orderFrontRegardless()
+            }
+            panelLog("窗口不可见 → 重新置前 isVisible=\(panel.isVisible) mini=\(panel.isMiniaturized)")
+        }
         if isConnected {
             refresh()
         } else if !isConnecting, Date().timeIntervalSince(lastConnectAttempt) > 1.5 {
