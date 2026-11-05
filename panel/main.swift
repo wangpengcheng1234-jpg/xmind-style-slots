@@ -376,11 +376,22 @@ final class PanelController: NSObject, WKScriptMessageHandler {
         let filled = slots.filter { !($0 is NSNull) }.count
         let selection = (state["selection"] as? [String: Any])?["count"] as? Int ?? 0
         let stamp = "connected=\(state["connected"] ?? false) filled=\(filled) selection=\(selection)"
-        if stamp != lastPushedStamp {
-            lastPushedStamp = stamp
-            panelLog("状态 \(stamp)")
+
+        // 这个函数会被 CDP 的 WebSocket 回调（后台线程）触发，
+        // 而 WKWebView.evaluateJavaScript 必须在主线程调用，否则 WebKit 直接杀进程
+        let apply = { [weak self] in
+            guard let self else { return }
+            if stamp != self.lastPushedStamp {
+                self.lastPushedStamp = stamp
+                panelLog("状态 \(stamp)")
+            }
+            self.webView.evaluateJavaScript("window.__pushState(\(json))", completionHandler: nil)
         }
-        webView.evaluateJavaScript("window.__pushState(\(json))", completionHandler: nil)
+        if Thread.isMainThread {
+            apply()
+        } else {
+            DispatchQueue.main.async(execute: apply)
+        }
     }
 
     private func pushDisconnected() {
