@@ -22,3 +22,7 @@ release/
 dist/
 *.tar.gz
 *.dmg
+
+# 系统 / 本地说明文件
+.DS_Store
+*本次项目产生文件说明*.md
